@@ -10,7 +10,6 @@
  * Setup:
  * 1. In Apps Script, enable YouTube Data API advanced service.
  * 2. Create sheets: Playlist_Cache (auto-managed), and per-playlist sheets.
- *
  */
 
 function listAllPlaylistsPreCheck() {
@@ -277,6 +276,13 @@ function incrementalBackupPlaylists() {
   }
 
   Logger.log("Incremental backup completed.");
+
+  // After backup completes, perform one-way A→B presence-check deletions as configured.
+  try {
+    runOneWayPresenceDeletion(); // Non-breaking: new function defined below
+  } catch (e) {
+    Logger.log("runOneWayPresenceDeletion failed: " + e);
+  }
 }
 
 function updateVideoPositions(sheet, offset) {
@@ -293,4 +299,380 @@ function updateVideoPositions(sheet, offset) {
 
   // Write back updated positions
   positionsRange.setValues(positions);
+}
+
+/**
+ * Normalize the 'Video Position' column (D, col 4) so data rows are 0..N-1 from top to bottom.
+ * Header is at row 1, so numbering starts at row 2 with 0.
+ * Use only on deletion events to keep calls efficient.
+ */
+function normalizeVideoPositionsZeroBased(sheet) {
+  const lastRow = sheet.getLastRow();
+  if (lastRow <= 1) return; // nothing to normalize
+
+  const rowCount = lastRow - 1; // data rows (excluding header)
+  const col = 4; // 'Video Position' column (D)
+  const range = sheet.getRange(2, col, rowCount, 1);
+  const values = new Array(rowCount).fill(0).map((_, i) => [i]); // 0..N-1
+
+  range.setValues(values);
+}
+
+/**
+ * Normalize the 'Video Position' column (D, col 4) so data rows are 0..N-1 from top to bottom.
+ * Header is at row 1, so numbering starts at row 2 with 0.
+ */
+function normalizeVideoPositionsZeroBased(sheet) {
+  const lastRow = sheet.getLastRow();
+  if (lastRow <= 1) return; // nothing to normalize
+
+  const rowCount = lastRow - 1; // data rows (excluding header)
+  const col = 4; // 'Video Position' column (D)
+  const range = sheet.getRange(2, col, rowCount, 1);
+  const values = new Array(rowCount).fill(0).map((_, i) => [i]); // 0..N-1
+
+  range.setValues(values);
+}
+
+/**
+ * One-way A→B presence-check deletion runner.
+ * Config sheet: "2-way config"
+ * Headers (exact):
+ *   - "Playlist to delete the video"
+ *   - "Playlist to check if video is there"
+ *
+ * Behavior:
+ *   For each row (A,B):
+ *     - Resolve A and B by ID or exact title from Playlist_Check.
+ *     - Load all videoIds from B into a Set.
+ *     - Iterate A's playlist items; if an item's videoId exists in B, delete that playlist item from A.
+ * Notes:
+ *   - No dry run; this performs real deletions.
+ *   - Ambiguous titles (duplicates) are skipped with a warning.
+ *   - Keeps existing backup logic intact; this is called at the end of incrementalBackupPlaylists().
+ */
+function runOneWayPresenceDeletion() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  const pairs = readTwoWayConfig_();
+  if (pairs.length === 0) {
+    Logger.log('[A→B] No valid rows found in "2-way config". Nothing to do.');
+    return;
+  }
+
+  // Load Playlist_Check cache to support title resolution logging later if needed
+  const playlistCheckCache = loadPlaylistCheckCache_();
+
+  // Cache for B playlist videoId sets: playlistId -> Set(videoId)
+  const bPresenceCache = new Map();
+
+  let totalChecked = 0;
+  let totalDeleted = 0;
+  let totalSkipped = 0;
+  let totalErrors = 0;
+
+  for (const { deleteFromId: aId, checkInId: bId, rowIndex } of pairs) {
+    try {
+      // Build or reuse presence set for B
+      let bSet = bPresenceCache.get(bId);
+      if (!bSet) {
+        bSet = buildVideoIdSet_(bId);
+        bPresenceCache.set(bId, bSet);
+        Logger.log(
+          `[A→B] Built presence set for B (${bId}) with ${bSet.size} videos.`
+        );
+      }
+
+      // Iterate A and delete items whose videoId is present in B
+      const items = listPlaylistItems_(aId); // array of { playlistItemId, videoId }
+      let rowChecked = 0;
+      let rowDeleted = 0;
+      let rowSkipped = 0;
+
+      // Track deleted videoIds to sync A's sheet afterwards
+      const deletedVideoIds = new Set();
+
+      for (const it of items) {
+        rowChecked++;
+        if (bSet.has(it.videoId)) {
+          try {
+            // Real deletion
+            YouTube.PlaylistItems.remove(it.playlistItemId);
+            rowDeleted++;
+            deletedVideoIds.add(it.videoId);
+          } catch (delErr) {
+            rowSkipped++; // treat as skipped, but count an error
+            totalErrors++;
+            Logger.log(
+              `[A→B][Row ${rowIndex}] Failed to delete item ${it.playlistItemId} from A (${aId}): ${delErr}`
+            );
+          }
+        } else {
+          rowSkipped++;
+        }
+      }
+
+      // Sheet-sync: delete rows in-place from A's per-playlist sheet where Video ID (column F) matches deleted items
+      try {
+        if (deletedVideoIds.size > 0) {
+          const aTitle = playlistCheckCache.idToTitle.get(aId) || aId; // fallback to ID if unknown
+          const sheetName = String(aTitle)
+            .replace(/[\/*?:\[\]]/g, "")
+            .substring(0, 90);
+          const aSheet = ss.getSheetByName(sheetName);
+          if (aSheet) {
+            const lastRow = aSheet.getLastRow();
+            if (lastRow > 1) {
+              // Read only Video ID column F (6), rows 2..lastRow
+              const videoIdCol = aSheet
+                .getRange(2, 6, lastRow - 1, 1)
+                .getValues();
+              const rowsToDelete = [];
+              for (let i = 0; i < videoIdCol.length; i++) {
+                const vid = String(videoIdCol[i][0] || "").trim();
+                if (deletedVideoIds.has(vid)) {
+                  // absolute row index in sheet
+                  rowsToDelete.push(i + 2);
+                }
+              }
+              // Delete bottom-up to avoid index shifts
+              rowsToDelete.sort((a, b) => b - a);
+              for (const rowNum of rowsToDelete) {
+                aSheet.deleteRow(rowNum);
+              }
+              if (rowsToDelete.length > 0) {
+                // Normalize positions after deletions: set Video Position (column D) to 0..N-1 top-down
+                try {
+                  normalizeVideoPositionsZeroBased(aSheet);
+                } catch (posErr) {
+                  Logger.log(
+                    `[A→B][Row ${rowIndex}] normalizeVideoPositionsZeroBased warning for "${sheetName}": ${posErr}`
+                  );
+                }
+                Logger.log(
+                  `[A→B][Row ${rowIndex}] Synced A sheet "${sheetName}": removed ${rowsToDelete.length} rows matching deleted Video IDs (column F).`
+                );
+              }
+            }
+          } else {
+            Logger.log(
+              `[A→B][Row ${rowIndex}] A sheet not found for "${aTitle}" while syncing deletions. Skipped sheet update.`
+            );
+          }
+        }
+      } catch (sheetErr) {
+        totalErrors++;
+        Logger.log(
+          `[A→B][Row ${rowIndex}] Sheet sync error for A=${aId}: ${sheetErr}`
+        );
+      }
+
+      totalChecked += rowChecked;
+      totalDeleted += rowDeleted;
+      totalSkipped += rowSkipped;
+
+      Logger.log(
+        `[A→B][Row ${rowIndex}] A=${aId} B=${bId} | Checked=${rowChecked}, Deleted=${rowDeleted}, Skipped=${rowSkipped}`
+      );
+    } catch (err) {
+      totalErrors++;
+      Logger.log(
+        `[A→B][Row ${rowIndex}] Error processing pair A=${aId}, B=${bId}: ${err}`
+      );
+    }
+  }
+
+  Logger.log(
+    `[A→B] Summary | Checked=${totalChecked}, Deleted=${totalDeleted}, Skipped=${totalSkipped}, Errors=${totalErrors}`
+  );
+}
+
+/**
+ * Read and validate "2-way config" sheet.
+ * Returns array of { deleteFromId, checkInId, rowIndex } using resolved IDs.
+ */
+function readTwoWayConfig_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheetName = "2-way config";
+  let sheet = ss.getSheetByName(sheetName);
+  if (!sheet) {
+    // Auto-create config sheet with headers and a default A/B row as requested.
+    sheet = ss.insertSheet(sheetName);
+    const headers = [
+      "Playlist to delete the video",
+      "Playlist to check if video is there",
+    ];
+    sheet.appendRow(headers);
+    sheet.appendRow([
+      "Watch Later 2 - since 9-24-2024",
+      "Bookmark videos 2 - since 03-22-2023",
+    ]);
+    Logger.log(
+      `[A→B] Created config sheet "${sheetName}" with default A/B row.`
+    );
+  }
+
+  const values = sheet.getDataRange().getValues();
+  if (!values || values.length === 0) {
+    Logger.log("[A→B] Config sheet is empty (unexpected after auto-create).");
+    return [];
+  }
+
+  const header = values[0].map((h) => String(h).trim());
+  const colA = header.indexOf("Playlist to delete the video");
+  const colB = header.indexOf("Playlist to check if video is there");
+
+  if (colA === -1 || colB === -1) {
+    Logger.log(
+      '[A→B] Config sheet headers missing. Required: "Playlist to delete the video", "Playlist to check if video is there"'
+    );
+    return [];
+  }
+
+  const playlistCheckCache = loadPlaylistCheckCache_();
+
+  const results = [];
+  for (let i = 1; i < values.length; i++) {
+    const row = values[i];
+    const rawA = String(row[colA] || "").trim();
+    const rawB = String(row[colB] || "").trim();
+    if (!rawA || !rawB) continue;
+
+    const aId = resolvePlaylistId_(rawA, playlistCheckCache);
+    const bId = resolvePlaylistId_(rawB, playlistCheckCache);
+
+    if (!aId) {
+      Logger.log(
+        `[A→B][Row ${i + 1}] Could not resolve A: "${rawA}". Skipping row.`
+      );
+      continue;
+    }
+    if (!bId) {
+      Logger.log(
+        `[A→B][Row ${i + 1}] Could not resolve B: "${rawB}". Skipping row.`
+      );
+      continue;
+    }
+
+    results.push({ deleteFromId: aId, checkInId: bId, rowIndex: i + 1 });
+  }
+
+  return results;
+}
+
+/**
+ * Load Playlist_Check into caches for ID/title resolution.
+ * Returns { titleToIds: Map<title, string[]>, idToTitle: Map<id, title> }
+ */
+function loadPlaylistCheckCache_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName("Playlist_Check");
+  const cache = {
+    titleToIds: new Map(),
+    idToTitle: new Map(),
+  };
+
+  if (!sheet) return cache;
+
+  const values = sheet.getDataRange().getValues();
+  if (!values || values.length === 0) return cache;
+
+  const header = values[0].map((h) => String(h).trim());
+  const idxTitle = header.indexOf("Playlist Title");
+  const idxId = header.indexOf("Playlist ID");
+
+  if (idxTitle === -1 || idxId === -1) return cache;
+
+  for (let i = 1; i < values.length; i++) {
+    const title = String(values[i][idxTitle] || "").trim();
+    const id = String(values[i][idxId] || "").trim();
+    if (!title || !id) continue;
+
+    const arr = cache.titleToIds.get(title) || [];
+    arr.push(id);
+    cache.titleToIds.set(title, arr);
+    cache.idToTitle.set(id, title);
+  }
+
+  return cache;
+}
+
+/**
+ * Resolve a playlist reference that can be an ID or an exact title.
+ * - If value looks like a playlist ID (starts with 'PL' or 'UU' or 'LL' etc.), return as-is.
+ * - Else, look up exact title in Playlist_Check. If ambiguous, log and return null.
+ */
+function resolvePlaylistId_(value, playlistCheckCache) {
+  const v = String(value).trim();
+
+  // Basic heuristic for playlist IDs (YouTube playlist IDs often start with 'PL', but can vary like 'UU', 'LL', etc.)
+  const idLike = /^[A-Za-z0-9_-]{10,}$/; // reasonable length/pattern
+  if (
+    idLike.test(v) &&
+    (v.startsWith("PL") ||
+      v.startsWith("UU") ||
+      v.startsWith("LL") ||
+      v.startsWith("FL"))
+  ) {
+    return v;
+  }
+
+  // Exact title match via cache
+  const ids = playlistCheckCache.titleToIds.get(v) || [];
+  if (ids.length === 1) return ids[0];
+  if (ids.length === 0) {
+    Logger.log(`[A→B] Title not found in Playlist_Check: "${v}"`);
+    return null;
+  }
+  // Ambiguous
+  Logger.log(
+    `[A→B] Ambiguous title in Playlist_Check: "${v}" matches ${ids.length} playlists. Skipping.`
+  );
+  return null;
+}
+
+/**
+ * List all playlist items for a playlistId.
+ * Returns array of { playlistItemId, videoId }.
+ */
+function listPlaylistItems_(playlistId) {
+  let pageToken = "";
+  const out = [];
+
+  do {
+    const resp = YouTube.PlaylistItems.list("snippet", {
+      playlistId: playlistId,
+      maxResults: 50,
+      pageToken: pageToken || undefined,
+    });
+
+    if (!resp.items || resp.items.length === 0) break;
+
+    for (let i = 0; i < resp.items.length; i++) {
+      const item = resp.items[i];
+      const snippet = item.snippet;
+      const videoId =
+        snippet && snippet.resourceId ? snippet.resourceId.videoId : null;
+      const playlistItemId = item.id;
+      if (videoId && playlistItemId) {
+        out.push({ playlistItemId, videoId });
+      }
+    }
+
+    pageToken = resp.nextPageToken;
+  } while (pageToken);
+
+  return out;
+}
+
+/**
+ * Build a Set of videoIds present in the given playlistId.
+ */
+function buildVideoIdSet_(playlistId) {
+  const items = listPlaylistItems_(playlistId);
+  const set = new Set();
+  for (const it of items) {
+    set.add(it.videoId);
+  }
+  return set;
 }
