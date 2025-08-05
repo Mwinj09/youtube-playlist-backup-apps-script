@@ -12,6 +12,9 @@ Back up your YouTube playlists into Google Sheets.
 
 - Playlist One-way sync: Configure Playlist A to sync to Playlist B. On each backup run, if a video in playlist A exists in playlist B, it’s removed from A
 
+https://github.com/user-attachments/assets/32b5d9fa-b1f0-474f-8c14-997565bbfa76
+
+
 ---
 
 ## Table of Contents
