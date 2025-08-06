@@ -12,7 +12,11 @@ Back up your YouTube playlists into Google Sheets.
 
 - Playlist One-way sync: Configure Playlist A to sync to Playlist B. On each backup run, if a video in playlist A exists in playlist B, it’s removed from A
 
+**➡️ Quick start: [Get the template (Sheet + Script)](#get-the-template-sheet--script)**
+
 https://github.com/user-attachments/assets/32b5d9fa-b1f0-474f-8c14-997565bbfa76
+
+**➡️ Quick start: [Get the template (Sheet + Script)](#get-the-template-sheet--script)**
 
 ---
 
@@ -94,86 +98,7 @@ Tips:
 
 ---
 
-## Get the template (Sheet + Script)
-
-Use the template spreadsheet so your copy includes the bound Apps Script automatically.
-
-1. Open the template: https://docs.google.com/spreadsheets/d/1NrNHbGPcOlAlqdlk4gcXFpHAs5Ds8zgBEI8XO1zFDsc/edit?usp=sharing
-2. File → Make a copy…
-3. In your copy: Extensions → Apps Script to open the script
-4. In Apps Script: Services (puzzle icon) → Add service → “YouTube Data API”
-5. Run `listAllPlaylistsPreCheck()` once and approve permissions if asked (Sheets + YouTube)
-6. Run `incrementalBackupPlaylists()` once and approve permissions if asked (Sheets + YouTube)
-7. Follow [“How to use”](#how-to-use) below for more details on how to run these two functions, and how to automate them (setting triggers at 12:00 AM pre-check, 1:00 AM backup)
-
-## Alternative: Manual setup
-
-If you prefer setting it up from scratch:
-
-1. Start from a new Google Sheet
-
-   - Google Drive → New → Google Sheets.
-
-2. Open the Sheet’s Apps Script editor
-
-   - In your Sheet: Extensions → Apps Script (opens the bound project).
-
-3. Add the code
-
-   - Create `code.gs` and paste the contents from this repo’s [`code.gs`](code.gs).
-
-4. Enable YouTube advanced service
-
-   - Services (puzzle icon) → Add a service → “YouTube Data API”.
-
-5. First run & permissions
-   - Run `listAllPlaylistsPreCheck()` once and approve permissions (Sheets + YouTube).
-
-## How to use
-
-### Step 1: Pre-check your playlists
-
-- Run `listAllPlaylistsPreCheck()` to create/update “Playlist_Check” with your owned playlists.
-- Why: Enables title→ID resolution used by playlist one-way sync and gives you a quick audit.
-
-Automate (recommended):
-
-- In Apps Script → Triggers (clock icon) → Add Trigger
-  - Function: `listAllPlaylistsPreCheck`
-  - Event source: Time-driven → Day timer → 12:00 AM daily
-
-### Step 2: Backup your playlists
-
-- Run `incrementalBackupPlaylists()` to:
-  - Update “Playlist_Cache”
-  - Create/update one sheet per playlist
-  - Insert only new videos at the top (since last run)
-
-Automate (recommended):
-
-- In Apps Script → Triggers (clock icon) → Add Trigger
-  - Function: `incrementalBackupPlaylists`
-  - Event source: Time-driven → Day timer → 1:00 AM daily
-
-Why this schedule:
-
-- Pre-check at 12:00 AM keeps “Playlist_Check” fresh.
-- Backup at 1:00 AM ensures the latest title/ID data is available and then applies playlist one-way sync rules.
-
-### Step 3: Configure playlist one-way sync (after first run)
-
-- The “2-way config” sheet is auto-created if missing. Configure it only after the first successful run so the sheet exists.
-- Add rows under two exact headers:
-  - “Playlist to delete the video” (A)
-  - “Playlist to check if video is there” (B)
-- Use playlist IDs (preferred) or exact titles from “Playlist_Check”.
-- Example: A = “Watch Later”, B = “Bookmark Videos”  
-  On every backup, if a video from A is found in B, it’s deleted from A and the A sheet is synced.
-
-Tips:
-
-- Prefer IDs to avoid title ambiguity.
-- If you use titles, keep “Playlist_Check” refreshed via the pre-check trigger.
+**➡️ Quick start: [Get the template (Sheet + Script)](#get-the-template-sheet--script)**
 
 ---
 
