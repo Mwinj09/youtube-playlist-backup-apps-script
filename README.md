@@ -14,7 +14,6 @@ Back up your YouTube playlists into Google Sheets.
 
 https://github.com/user-attachments/assets/32b5d9fa-b1f0-474f-8c14-997565bbfa76
 
-
 ---
 
 ## Table of Contents
@@ -94,7 +93,21 @@ Tips:
 
 ---
 
-## Set up (one-time)
+## Get the template (Sheet + Script)
+
+Use the template spreadsheet so your copy includes the bound Apps Script automatically.
+
+1. Open the template: https://docs.google.com/spreadsheets/d/1NrNHbGPcOlAlqdlk4gcXFpHAs5Ds8zgBEI8XO1zFDsc/edit?usp=sharing
+2. File → Make a copy…
+3. In your copy: Extensions → Apps Script to open the script
+4. In Apps Script: Services (puzzle icon) → Add service → “YouTube Data API”
+5. Run `listAllPlaylistsPreCheck()` once and approve permissions if asked (Sheets + YouTube)
+6. Run `incrementalBackupPlaylists()` once and approve permissions if asked (Sheets + YouTube)
+7. Follow [“How to use”](#how-to-use) below for more details on how to run these two functions, and how to automate them (setting triggers at 12:00 AM pre-check, 1:00 AM backup)
+
+## Alternative: Manual setup
+
+If you prefer setting it up from scratch:
 
 1. Start from a new Google Sheet
 
@@ -102,23 +115,18 @@ Tips:
 
 2. Open the Sheet’s Apps Script editor
 
-   - In your Sheet: Extensions → Apps Script (opens the bound Apps Script project).
+   - In your Sheet: Extensions → Apps Script (opens the bound project).
 
 3. Add the code
 
-   - In the Apps Script editor, create `code.gs` and paste the contents from this repo’s [`code.gs`](code.gs).
+   - Create `code.gs` and paste the contents from this repo’s [`code.gs`](code.gs).
 
 4. Enable YouTube advanced service
 
-   - Left sidebar → Services (puzzle icon) → Add a service → choose “YouTube Data API”.
+   - Services (puzzle icon) → Add a service → “YouTube Data API”.
 
 5. First run & permissions
-   - Run any function once (e.g., `listAllPlaylistsPreCheck()`).
-   - Approve the authorization prompts for:
-     - Google Sheets (read/write tabs)
-     - YouTube Data API (list playlists, read items, remove items for playlist one-way sync rules)
-
----
+   - Run `listAllPlaylistsPreCheck()` once and approve permissions (Sheets + YouTube).
 
 ## How to use
 

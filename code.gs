@@ -1,5 +1,6 @@
 /**
  * YouTube Playlist Incremental Backup with Playlist & Video Caching
+ * Public repo: https://github.com/raymelon/youtube-playlist-backup-apps-script
  * ---------------------------------------------------------------
  * Features:
  * 1. Playlist-level caching (preserve metadata even if inaccessible)
@@ -13,6 +14,8 @@
  */
 
 function listAllPlaylistsPreCheck() {
+  generateReadmeSheetIfMissing();
+
   const sheet =
     SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Playlist_Check") ||
     SpreadsheetApp.getActiveSpreadsheet().insertSheet("Playlist_Check");
@@ -92,6 +95,8 @@ function listAllPlaylistsPreCheck() {
 }
 
 function incrementalBackupPlaylists() {
+  generateReadmeSheetIfMissing();
+
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const cacheSheet =
     ss.getSheetByName("Playlist_Cache") || ss.insertSheet("Playlist_Cache");
@@ -675,4 +680,109 @@ function buildVideoIdSet_(playlistId) {
     set.add(it.videoId);
   }
   return set;
+}
+
+/**
+ * Ensure a README sheet exists with repo link, author credit, and MIT License text.
+ * Idempotent: if "README" sheet already exists, it does nothing.
+ */
+function generateReadmeSheetIfMissing() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const SHEET_NAME = "README";
+  let sheet = ss.getSheetByName(SHEET_NAME);
+  if (sheet) {
+    // Ensure README is the first sheet
+    try {
+      ss.setActiveSheet(sheet);
+      ss.moveActiveSheet(1);
+    } catch (e) {
+      Logger.log("README reordering warning: " + e);
+    }
+  } else {
+    sheet = ss.insertSheet(SHEET_NAME);
+    // Place README as the first sheet
+    try {
+      ss.setActiveSheet(sheet);
+      ss.moveActiveSheet(1);
+    } catch (e) {
+      Logger.log("README ordering warning: " + e);
+    }
+  }
+
+  // Content
+  const title = "YouTube Playlist Backup - README";
+  const playlistScriptLine =
+    "Playlist script: https://script.google.com/u/0/home/projects/1NAoattHbLky184Dy1RyJ3iVXNS-Cq6bsHeE9If3Eq31PaexregM7Ygt6/edit";
+  const repoLine =
+    "Public Repo: https://github.com/raymelon/youtube-playlist-backup-apps-script";
+  const authorLine =
+    "Written By: Raymel Francisco (https://github.com/raymelon)";
+  const sectionBreak = "—";
+  const licenseHeader = "MIT License";
+  const licenseBody = [
+    "MIT License",
+    "",
+    "Copyright (c) 2025 Raymel Francisco",
+    "",
+    "Permission is hereby granted, free of charge, to any person obtaining a copy",
+    'of this software and associated documentation files (the "Software"), to deal',
+    "in the Software without restriction, including without limitation the rights",
+    "to use, copy, modify, merge, publish, distribute, sublicense, and/or sell",
+    "copies of the Software, and to permit persons to whom the Software is",
+    "furnished to do so, subject to the following conditions:",
+    "",
+    "The above copyright notice and this permission notice shall be included in all",
+    "copies or substantial portions of the Software.",
+    "",
+    'THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR',
+    "IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,",
+    "FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE",
+    "AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER",
+    "LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,",
+    "OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE",
+    "SOFTWARE.",
+  ];
+
+  const intro = [
+    title,
+    "",
+    playlistScriptLine,
+    repoLine,
+    authorLine,
+    "",
+    sectionBreak,
+    "This Google Sheets–bound Apps Script performs incremental backups of your YouTube playlists,",
+    "caches playlist metadata (including for removed/private items), and provides optional",
+    "one-way presence-check deletions between playlists via the '2-way config' sheet.",
+    "",
+    "Key entry points:",
+    " - listAllPlaylistsPreCheck(): Populate/refresh Playlist_Check with owned playlists.",
+    " - incrementalBackupPlaylists(): Incrementally append new videos to per-playlist sheets",
+    "   and maintain a Playlist_Cache of last-known metadata.",
+    "",
+    sectionBreak,
+    "",
+    licenseHeader,
+    "",
+  ];
+
+  const content = intro.concat(licenseBody);
+
+  // Write content to column A
+  const rows = content.map((line) => [line]);
+  sheet.getRange(1, 1, rows.length, 1).setValues(rows);
+
+  // Formatting
+  try {
+    sheet.setColumnWidth(1, 900);
+    sheet.getRange(1, 1).setFontWeight("bold").setFontSize(14);
+    sheet.getRange(3, 1).setFontWeight("bold"); // repo
+    sheet.getRange(4, 1).setFontStyle("italic"); // author
+    sheet.getRange(1, 1, rows.length, 1).setWrap(true);
+    sheet.setFrozenRows(1);
+  } catch (e) {
+    Logger.log("README formatting warning: " + e);
+  }
+
+  Logger.log("README sheet created.");
 }
